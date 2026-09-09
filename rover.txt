@@ -1,0 +1,472 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Wire.h>
+#include <DHT.h>
+
+// =====================================================
+// WIFI
+// =====================================================
+const char* WIFI_SSID = "Galaxy M30s26CE";
+const char* WIFI_PASSWORD = "dwtl7575";
+
+WebServer server(80);
+
+// =====================================================
+// MPU6050 RAW I2C
+// =====================================================
+const int MPU_ADDR = 0x68;
+bool mpuConnected = false;
+float gyroZ_rad = 0;
+
+// =====================================================
+// DHT11 SENSOR (Temperature Only)
+// =====================================================
+#define DHTPIN 12
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
+
+// =====================================================
+// TF LiDAR (Serial2: RX=16, TX=17)
+// =====================================================
+int lidarDistance = 0;
+
+// =====================================================
+// MOTOR PINS (TB6612FNG x2)
+// =====================================================
+#define FL_PWM 32
+#define FL_IN1 33
+#define FL_IN2 25
+#define FR_PWM 26
+#define FR_IN1 27
+#define FR_IN2 14
+
+#define BL_PWM 13
+#define BL_IN1 18
+#define BL_IN2 19
+#define BR_PWM 23
+#define BR_IN1 5
+#define BR_IN2 4
+
+int motorSpeed = 200;
+String currentMotionState = "STOPPED";
+
+// =====================================================
+// ODOMETRY & METRICS
+// =====================================================
+const float WHEEL_DIAMETER_CM = 6.5; 
+const float PULSES_PER_REV = 330.0;  
+const float CM_PER_PULSE = (3.14159 * WHEEL_DIAMETER_CM) / PULSES_PER_REV;
+
+volatile long leftCount = 0;
+volatile long rightCount = 0;
+long prevLeftCount = 0;
+long prevRightCount = 0;
+
+float posX = 0.0;
+float posY = 0.0;
+float headingTheta = 0.0; // Radians
+
+float totalDistanceCm = 0.0;
+float backwardDistanceCm = 0.0;
+float totalDisplacement = 0.0;
+
+unsigned long prevTime = 0;
+unsigned long lastDHTCheck = 0;
+float cachedTemp = 0.0;
+
+// Encoder Pins (Input Only)
+const int leftPhaseA = 34;
+const int leftPhaseB = 35;
+const int rightPhaseA = 36;
+const int rightPhaseB = 39;
+
+void IRAM_ATTR leftEncoderISR() {
+  if (digitalRead(leftPhaseB) == HIGH) leftCount++;
+  else leftCount--;
+}
+
+void IRAM_ATTR rightEncoderISR() {
+  if (digitalRead(rightPhaseB) == HIGH) rightCount++;
+  else rightCount--;
+}
+
+// =====================================================
+// MOTOR CONTROL
+// =====================================================
+void motorControl(int pwmPin, int in1, int in2, int direction) {
+  if (direction == 1) {
+    digitalWrite(in1, HIGH); digitalWrite(in2, LOW); analogWrite(pwmPin, motorSpeed);
+  } else if (direction == -1) {
+    digitalWrite(in1, LOW); digitalWrite(in2, HIGH); analogWrite(pwmPin, motorSpeed);
+  } else {
+    digitalWrite(in1, LOW); digitalWrite(in2, LOW); analogWrite(pwmPin, 0);
+  }
+}
+
+void stopMotors() {
+  motorControl(FL_PWM, FL_IN1, FL_IN2, 0); motorControl(FR_PWM, FR_IN1, FR_IN2, 0);
+  motorControl(BL_PWM, BL_IN1, BL_IN2, 0); motorControl(BR_PWM, BR_IN1, BR_IN2, 0);
+  currentMotionState = "STOPPED";
+}
+
+void moveForward() {
+  motorControl(FL_PWM, FL_IN1, FL_IN2, -1); motorControl(BL_PWM, BL_IN1, BL_IN2, -1);
+  motorControl(FR_PWM, FR_IN1, FR_IN2, 1); motorControl(BR_PWM, BR_IN1, BR_IN2, 1);
+  currentMotionState = "FORWARD";
+}
+
+void moveBackward() {
+  motorControl(FL_PWM, FL_IN1, FL_IN2, 1); motorControl(BL_PWM, BL_IN1, BL_IN2, 1);
+  motorControl(FR_PWM, FR_IN1, FR_IN2, -1); motorControl(BR_PWM, BR_IN1, BR_IN2, -1);
+  currentMotionState = "BACKWARD";
+}
+
+void turnLeft() {
+  motorControl(FL_PWM, FL_IN1, FL_IN2, 1); motorControl(BL_PWM, BL_IN1, BL_IN2, 1);
+  motorControl(FR_PWM, FR_IN1, FR_IN2, 1); motorControl(BR_PWM, BR_IN1, BR_IN2, 1);
+  currentMotionState = "LEFT";
+}
+
+void turnRight() {
+  motorControl(FL_PWM, FL_IN1, FL_IN2, -1); motorControl(BL_PWM, BL_IN1, BL_IN2, -1);
+  motorControl(FR_PWM, FR_IN1, FR_IN2, -1); motorControl(BR_PWM, BR_IN1, BR_IN2, -1);
+  currentMotionState = "RIGHT";
+}
+
+// =====================================================
+// HTML DASHBOARD (APOLLO MOON ROVER HUD)
+// =====================================================
+const char dashboard[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APOLLO-X LUNAR ROVER HUD</title>
+<style>
+body { background: #030508; color: #00f3ff; font-family: 'Courier New', Courier, monospace; text-align: center; margin: 0; padding: 15px; }
+h1 { font-size: 24px; letter-spacing: 3px; color: #ff6600; margin-bottom: 5px; text-shadow: 0 0 10px rgba(255,102,0,0.5); }
+.hud-sub { font-size: 11px; color: #88aacc; margin-bottom: 20px; letter-spacing: 1px; }
+.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; max-width: 1100px; margin: auto; }
+.panel { background: rgba(10, 20, 35, 0.85); border: 1px solid #00f3ff44; border-radius: 8px; padding: 15px; box-shadow: inset 0 0 15px rgba(0,243,255,0.05); }
+.panel h2 { font-size: 14px; color: #ff6600; border-bottom: 1px dashed #00f3ff44; padding-bottom: 6px; margin-top: 0; letter-spacing: 2px; }
+
+/* Compass Attitude Indicator */
+.compass-box { position: relative; width: 140px; height: 140px; margin: 10px auto; border: 2px solid #00f3ff; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 15px rgba(0,243,255,0.2); }
+.compass-needle { width: 4px; height: 60px; background: #ff6600; position: absolute; top: 10px; transform-origin: bottom center; transition: transform 0.1s linear; box-shadow: 0 0 8px #ff6600; }
+.compass-center { width: 12px; height: 12px; background: #00f3ff; border-radius: 50%; z-index: 2; }
+
+/* Canvas Path */
+canvas { background: #010306; border: 1px solid #00f3ff33; border-radius: 4px; }
+
+/* Metrics */
+.metric-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 13px; border-bottom: 1px solid #ffffff11; padding-bottom: 4px; }
+.metric-val { color: #fff; font-weight: bold; text-shadow: 0 0 5px rgba(255,255,255,0.5); }
+
+/* Controls */
+.controls { display: grid; grid-template-columns: 80px 80px 80px; gap: 8px; justify-content: center; margin-top: 10px; }
+button { width: 80px; height: 50px; background: #0a1422; border: 1px solid #00f3ff; color: #00f3ff; font-family: monospace; font-weight: bold; border-radius: 4px; cursor: pointer; }
+button:active { background: #00f3ff; color: #030508; }
+.stop-btn { background: #330505; border-color: #ff3333; color: #ff3333; }
+.stop-btn:active { background: #ff3333; color: #fff; }
+
+/* Camera Feeds */
+.cam-container { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.cam-feed { background: #000; border: 1px solid #00f3ff33; height: 120px; display: flex; align-items: center; justify-content: center; color: #446688; font-size: 11px; border-radius: 4px; position: relative; overflow: hidden; }
+.cam-feed::before { content: "LIVE FEED"; position: absolute; top: 4px; left: 6px; font-size: 9px; color: #ff6600; letter-spacing: 1px; }
+
+input[type=range] { width: 100%; accent-color: #ff6600; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<h1>🌙 APOLLO-X LUNAR ROVER</h1>
+<div class="hud-sub">TELEMETER & NAVIGATION SYSTEM // STATUS: <span id="status" style="color:#ff6600">STANDBY</span></div>
+
+<div class="dashboard-grid">
+
+    <!-- PANEL 1: ATTITUDE & HEADING -->
+    <div class="panel">
+        <h2>ATTITUDE INDICATOR</h2>
+        <div class="compass-box">
+            <div class="compass-needle" id="compassNeedle"></div>
+            <div class="compass-center"></div>
+        </div>
+        <div class="metric-row"><span>HEADING ANGLE:</span><span class="metric-val" id="heading">0.0°</span></div>
+        <div class="metric-row"><span>LUNAR TEMP:</span><span class="metric-val" id="temp">0.0 °C</span></div>
+    </div>
+
+    <!-- PANEL 2: PATH TRACER -->
+    <div class="panel">
+        <h2>ROVER TRAJECTORY MAPPING</h2>
+        <canvas id="pathCanvas" width="240" height="150"></canvas>
+        <div class="metric-row"><span>GRID POS (X, Y):</span><span class="metric-val" id="xyPos">0, 0 cm</span></div>
+    </div>
+
+    <!-- PANEL 3: TELEMETRY & METRICS -->
+    <div class="panel">
+        <h2>CORE TELEMETRY</h2>
+        <div class="metric-row"><span>TOTAL DISTANCE:</span><span class="metric-val" id="totDist">0.0 cm</span></div>
+        <div class="metric-row"><span>DISPLACEMENT:</span><span class="metric-val" id="disp">0.0 cm</span></div>
+        <div class="metric-row"><span>BACKWARD TRAVEL:</span><span class="metric-val" id="bwdDist">0.0 cm</span></div>
+        <div class="metric-row"><span>OBSTACLE STATUS:</span><span class="metric-val" id="obsStatus" style="color:#00ffcc">CLEAR</span></div>
+        <div class="metric-row"><span>LiDAR DISTANCE:</span><span class="metric-val" id="lidarDist">--- cm</span></div>
+    </div>
+
+    <!-- PANEL 4: DRIVE CONTROLS -->
+    <div class="panel">
+        <h2>MANUAL GUIDANCE</h2>
+        <div class="controls">
+            <div></div>
+            <button onmousedown="move('forward')" onmouseup="stop()" ontouchstart="move('forward')" ontouchend="stop()">FWD</button>
+            <div></div>
+            <button onmousedown="move('left')" onmouseup="stop()" ontouchstart="move('left')" ontouchend="stop()">LFT</button>
+            <button class="stop-btn" onclick="stop()">STP</button>
+            <button onmousedown="move('right')" onmouseup="stop()" ontouchstart="move('right')" ontouchend="stop()">RGT</button>
+            <div></div>
+            <button onmousedown="move('backward')" onmouseup="stop()" ontouchstart="move('backward')" ontouchend="stop()">BCK</button>
+            <div></div>
+        </div>
+        <div style="margin-top:12px; text-align:left; font-size:11px;">
+            DRIVE POWER: <span id="speedValue">200</span>
+            <input type="range" min="0" max="255" value="200" id="speed" oninput="changeSpeed(this.value)">
+        </div>
+    </div>
+
+</div>
+
+<!-- PANEL 5: DUAL ESP32-CAM VISION -->
+<div class="panel" style="max-width:1100px; margin: 15px auto;">
+    <h2>STEREOSCOPIC HAZ-CAM VISION (ESP32-CAM NODES)</h2>
+    <div class="cam-container">
+        <div class="cam-feed">CAM 1: NAV-CAM [STANDBY]</div>
+        <div class="cam-feed">CAM 2: HAZ-CAM [STANDBY]</div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById("pathCanvas");
+const ctx = canvas.getContext("2d");
+let pathPoints = [];
+
+function move(direction) { fetch("/move?direction=" + direction); document.getElementById("status").innerText = direction.toUpperCase(); }
+function stop() { fetch("/stop"); document.getElementById("status").innerText = "STANDBY"; }
+function changeSpeed(value) { document.getElementById("speedValue").innerText = value; fetch("/speed?value=" + value); }
+
+function drawPath(x, y) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw grid background lines
+    ctx.strokeStyle = "#00f3ff11";
+    ctx.lineWidth = 1;
+    for(let i=0; i<canvas.width; i+=30) {
+        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
+    }
+
+    // Map rover coordinates to canvas center
+    let cx = canvas.width / 2 + (x * 0.8);
+    let cy = canvas.height / 2 - (y * 0.8);
+    pathPoints.push({x: cx, y: cy});
+    if(pathPoints.length > 100) pathPoints.shift();
+
+    if(pathPoints.length > 1) {
+        ctx.strokeStyle = "#ff6600";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
+        for(let p of pathPoints) { ctx.lineTo(p.x, p.y); }
+        ctx.stroke();
+    }
+
+    // Draw rover center blip
+    ctx.fillStyle = "#00f3ff";
+    ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI*2); ctx.fill();
+}
+
+function updateTelemetry() {
+    fetch("/sensor").then(res => res.json()).then(data => {
+        document.getElementById("totDist").innerText = data.tot.toFixed(1) + " cm";
+        document.getElementById("disp").innerText = data.disp.toFixed(1) + " cm";
+        document.getElementById("bwdDist").innerText = data.bwd.toFixed(1) + " cm";
+        document.getElementById("heading").innerText = data.heading.toFixed(1) + "°";
+        document.getElementById("xyPos").innerText = data.x.toFixed(0) + ", " + data.y.toFixed(0) + " cm";
+        document.getElementById("temp").innerText = data.temp.toFixed(1) + " °C";
+        document.getElementById("lidarDist").innerText = data.lidar + " cm";
+
+        // Compass Rotation
+        document.getElementById("compassNeedle").style.transform = `rotate(${data.heading}deg)`;
+
+        // Obstacle warning check
+        let obsElem = document.getElementById("obsStatus");
+        if(data.lidar > 0 && data.lidar < 20) {
+            obsElem.innerText = "WARNING: PROXIMITY";
+            obsElem.style.color = "#ff3333";
+        } else {
+            obsElem.innerText = "CLEAR";
+            obsElem.style.color = "#00ffcc";
+        }
+
+        drawPath(data.x, data.y);
+    });
+}
+setInterval(updateTelemetry, 300);
+
+document.addEventListener("keydown", function(event) {
+    if(event.repeat) return;
+    if(event.key === "ArrowUp") move("forward");
+    else if(event.key === "ArrowDown") move("backward");
+    else if(event.key === "ArrowLeft") move("left");
+    else if(event.key === "ArrowRight") move("right");
+    else if(event.key === " ") stop();
+});
+document.addEventListener("keyup", function(event) {
+    if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(event.key)) stop();
+});
+</script>
+</body>
+</html>
+)rawliteral";
+
+void handleRoot() { server.send(200, "text/html", dashboard); }
+
+void handleMove() {
+  if (!server.hasArg("direction")) { server.send(400, "text/plain", "Missing direction"); return; }
+  String dir = server.arg("direction");
+  if (dir == "forward") moveForward();
+  else if (dir == "backward") moveBackward();
+  else if (dir == "left") turnLeft();
+  else if (dir == "right") turnRight();
+  else stopMotors();
+  server.send(200, "text/plain", "OK");
+}
+
+void handleStop() { stopMotors(); server.send(200, "text/plain", "STOPPED"); }
+void handleSpeed() {
+  if (server.hasArg("value")) { motorSpeed = constrain(server.arg("value").toInt(), 0, 255); }
+  server.send(200, "text/plain", "OK");
+}
+
+void handleSensor() {
+  // Read TF LiDAR from Serial2 if available
+  while (Serial2.available() >= 9) {
+    if (Serial2.read() == 0x59) {
+      if (Serial2.read() == 0x59) {
+        int distLow = Serial2.read();
+        int distHigh = Serial2.read();
+        lidarDistance = distLow + (distHigh * 256);
+        for(int i=0; i<5; i++) Serial2.read();
+      }
+    }
+  }
+
+  // Safely poll DHT11 temperature every 2 seconds
+  if (millis() - lastDHTCheck > 2000) {
+    lastDHTCheck = millis();
+    float t = dht.readTemperature();
+    if (!isnan(t)) cachedTemp = t;
+  }
+
+  float headingDeg = headingTheta * (180.0 / 3.14159);
+  while(headingDeg >= 360.0) headingDeg -= 360.0;
+  while(headingDeg < 0.0) headingDeg += 360.0;
+
+  String json = "{";
+  json += "\"tot\":" + String(totalDistanceCm, 1) + ",";
+  json += "\"bwd\":" + String(backwardDistanceCm, 1) + ",";
+  json += "\"disp\":" + String(totalDisplacement, 1) + ",";
+  json += "\"heading\":" + String(headingDeg, 1) + ",";
+  json += "\"x\":" + String(posX, 1) + ",";
+  json += "\"y\":" + String(posY, 1) + ",";
+  json += "\"lidar\":" + String(lidarDistance) + ",";
+  json += "\"temp\":" + String(cachedTemp, 1);
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+// =====================================================
+// UPDATE ODOMETRY MATH
+// =====================================================
+void updateOdometry() {
+  unsigned long currentTime = millis();
+  float dt = (currentTime - prevTime) / 1000.0;
+  if (dt <= 0) return;
+  prevTime = currentTime;
+
+  // Read Gyro Z from MPU6050
+  Wire.beginTransmission(MPU_ADDR); Wire.write(0x47); Wire.endTransmission(false);
+  Wire.requestFrom(MPU_ADDR, 2, true);
+  int16_t rawGz = Wire.read()<<8 | Wire.read();
+  gyroZ_rad = (rawGz / 131.0) * (3.14159 / 180.0);
+  if (abs(gyroZ_rad) < 0.03) gyroZ_rad = 0; 
+
+  headingTheta += gyroZ_rad * dt;
+
+  noInterrupts();
+  long currentLeft = leftCount;
+  long currentRight = rightCount;
+  interrupts();
+
+  long deltaLeft = currentLeft - prevLeftCount;
+  long deltaRight = currentRight - prevRightCount;
+  prevLeftCount = currentLeft;
+  prevRightCount = currentRight;
+
+  float distLeft = deltaLeft * CM_PER_PULSE;
+  float distRight = deltaRight * CM_PER_PULSE;
+  float deltaDistance = (distLeft + distRight) / 2.0;
+
+  if (currentMotionState == "FORWARD") {
+    totalDistanceCm += abs(deltaDistance);
+  } else if (currentMotionState == "BACKWARD") {
+    backwardDistanceCm += abs(deltaDistance);
+    totalDistanceCm += abs(deltaDistance);
+  }
+
+  posX += deltaDistance * cos(headingTheta);
+  posY += deltaDistance * sin(headingTheta);
+  totalDisplacement = sqrt((posX * posX) + (posY * posY));
+}
+
+// =====================================================
+// SETUP
+// =====================================================
+void setup() {
+  Serial.begin(115200); 
+  Serial2.begin(115200, SERIAL_8N1, 16, 17); // LiDAR on RX2=16, TX2=17
+  dht.begin(); // Start DHT11 on GPIO 15
+  delay(1000);
+
+  pinMode(FL_PWM, OUTPUT); pinMode(FL_IN1, OUTPUT); pinMode(FL_IN2, OUTPUT);
+  pinMode(FR_PWM, OUTPUT); pinMode(FR_IN1, OUTPUT); pinMode(FR_IN2, OUTPUT);
+  pinMode(BL_PWM, OUTPUT); pinMode(BL_IN1, OUTPUT); pinMode(BL_IN2, OUTPUT);
+  pinMode(BR_PWM, OUTPUT); pinMode(BR_IN1, OUTPUT); pinMode(BR_IN2, OUTPUT);
+  stopMotors();
+
+  pinMode(leftPhaseA, INPUT); pinMode(leftPhaseB, INPUT);
+  pinMode(rightPhaseA, INPUT); pinMode(rightPhaseB, INPUT);
+  attachInterrupt(digitalPinToInterrupt(leftPhaseA), leftEncoderISR, RISING);
+  attachInterrupt(digitalPinToInterrupt(rightPhaseA), rightEncoderISR, RISING);
+
+  Wire.begin(21, 22);
+  Wire.beginTransmission(MPU_ADDR); Wire.write(0x6B); Wire.write(0);
+  if (Wire.endTransmission(true) == 0) mpuConnected = true;
+
+  WiFi.mode(WIFI_STA); WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) delay(500);
+
+  server.on("/", handleRoot);
+  server.on("/move", handleMove);
+  server.on("/stop", handleStop);
+  server.on("/speed", handleSpeed);
+  server.on("/sensor", handleSensor);
+  server.begin();
+  
+  prevTime = millis();
+}
+
+void loop() {
+  server.handleClient();
+  updateOdometry();
+  delay(10);
+}

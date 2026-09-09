@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Rover Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- Config values injected from Flask -->
+    <script>
+        const ROVER_CONFIG = {
+            demoMode: {{ 'true' if config.demo_mode else 'false' }},
+            cam1Url: "{{ config.cam1 }}",
+            cam2Url: "{{ config.cam2 }}"
+        };
+    </script>
+</head>
+<body>
+    <div id="demo-banner" class="hidden">DEMO MODE ACTIVE - SIMULATED SENSORS</div>
+    
+    <header>
+        <h1>ESP32 Rover Control Dashboard</h1>
+        <div id="ws-status" class="status-indicator disconnected">WebSocket: Disconnected</div>
+    </header>
+
+    <main class="dashboard-grid">
+        
+        <!-- ROVER STATUS -->
+        <section class="panel">
+            <h2>Rover Status</h2>
+            <div class="status-list">
+                <div class="status-item"><span class="label">ESP32</span> <div id="status-esp32" class="led off"></div></div>
+                <div class="status-item"><span class="label">Wi-Fi</span> <div id="status-wifi" class="led off"></div></div>
+                <div class="status-item"><span class="label">MPU6050</span> <div id="status-mpu" class="led off"></div></div>
+                <div class="status-item"><span class="label">LiDAR</span> <div id="status-lidar" class="led off"></div></div>
+                <div class="status-item"><span class="label">Left Camera</span> <div id="status-cam-left" class="led off"></div></div>
+                <div class="status-item"><span class="label">Right Camera</span> <div id="status-cam-right" class="led off"></div></div>
+            </div>
+        </section>
+
+        <!-- CAMERA VIEW -->
+        <section class="panel camera-panel">
+            <h2>Camera View</h2>
+            <div class="camera-container">
+                <div class="camera">
+                    <h3>LEFT CAMERA</h3>
+                    <div id="cam-left-feed" class="feed offline">Camera Offline</div>
+                </div>
+                <div class="camera">
+                    <h3>RIGHT CAMERA</h3>
+                    <div id="cam-right-feed" class="feed offline">Camera Offline</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ROVER CONTROL -->
+        <section class="panel control-panel">
+            <h2>Rover Control</h2>
+            <div class="directional-controls">
+                <div class="empty"></div>
+                <button id="btn-forward" class="ctrl-btn">FORWARD</button>
+                <div class="empty"></div>
+                
+                <button id="btn-left" class="ctrl-btn">LEFT</button>
+                <button id="btn-stop" class="ctrl-btn stop">STOP</button>
+                <button id="btn-right" class="ctrl-btn">RIGHT</button>
+                
+                <div class="empty"></div>
+                <button id="btn-backward" class="ctrl-btn">BACKWARD</button>
+                <div class="empty"></div>
+            </div>
+            <div class="speed-control">
+                <label for="speed-slider">Speed: <span id="speed-display">200</span></label>
+                <input type="range" id="speed-slider" min="0" max="255" value="200">
+            </div>
+            <button id="btn-estop" class="estop-btn">EMERGENCY STOP</button>
+        </section>
+
+        <!-- MPU6050 -->
+        <section class="panel">
+            <h2>MPU6050 (Odometry & Gyro)</h2>
+            <div class="sensor-grid">
+                <div class="sensor-group">
+                    <h4>Position (cm)</h4>
+                    <p>X: <span id="pos-x">0.0</span></p>
+                    <p>Y: <span id="pos-y">0.0</span></p>
+                    <p>Disp: <span id="pos-disp">0.0</span></p>
+                </div>
+                <div class="sensor-group">
+                    <h4>Heading</h4>
+                    <p>Angle: <span id="heading-angle">0.0</span>°</p>
+                    <p>Temp: <span id="temp-val">0.0</span>°C</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- LiDAR -->
+        <section class="panel">
+            <h2>LiDAR</h2>
+            <div class="lidar-display">
+                <p>Distance: <span id="lidar-distance">0</span> cm</p>
+                <div class="lidar-visual-bar">
+                    <div id="lidar-fill" class="lidar-fill"></div>
+                </div>
+                <p class="sensor-status" id="lidar-sensor-status">DISCONNECTED</p>
+            </div>
+        </section>
+
+        <!-- MOTOR STATUS -->
+        <section class="panel">
+            <h2>Motor Status</h2>
+            <div class="motor-grid">
+                <div class="motor-item">
+                    <span class="motor-name">Front Left</span>
+                    <span id="motor-fl" class="motor-state">STOP</span>
+                </div>
+                <div class="motor-item">
+                    <span class="motor-name">Front Right</span>
+                    <span id="motor-fr" class="motor-state">STOP</span>
+                </div>
+                <div class="motor-item">
+                    <span class="motor-name">Back Left</span>
+                    <span id="motor-bl" class="motor-state">STOP</span>
+                </div>
+                <div class="motor-item">
+                    <span class="motor-name">Back Right</span>
+                    <span id="motor-br" class="motor-state">STOP</span>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Load Modular JS -->
+    <script src="{{ url_for('static', filename='js/websocket.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/ui.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/sensors.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/cameras.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/controls.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

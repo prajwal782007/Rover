@@ -1,0 +1,249 @@
+:root {
+    --bg-color: #121212;
+    --panel-bg: #1e1e1e;
+    --text-color: #e0e0e0;
+    --primary: #2196F3;
+    --danger: #f44336;
+    --success: #4CAF50;
+    --border: #333;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    line-height: 1.6;
+}
+
+.hidden {
+    display: none !important;
+}
+
+#demo-banner {
+    background-color: #ff9800;
+    color: #000;
+    text-align: center;
+    font-weight: bold;
+    padding: 5px;
+    letter-spacing: 2px;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 30px;
+    background-color: var(--panel-bg);
+    border-bottom: 1px solid var(--border);
+}
+
+h1 {
+    font-size: 1.5rem;
+    color: var(--primary);
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.panel {
+    background-color: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+h2 {
+    font-size: 1.2rem;
+    margin-bottom: 15px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 5px;
+    color: var(--primary);
+}
+
+/* Status Indicators */
+.status-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.status-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.led {
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background-color: #555;
+}
+
+.led.on { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
+.led.error { background-color: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
+/* Cameras */
+.camera-panel {
+    grid-column: 1 / -1;
+}
+
+.camera-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.camera h3 {
+    font-size: 0.9rem;
+    text-align: center;
+    margin-bottom: 5px;
+}
+
+.feed {
+    width: 100%;
+    height: 250px;
+    background-color: #000;
+    border: 1px solid var(--border);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: #888;
+    background-size: cover;
+    background-position: center;
+}
+
+.feed.offline {
+    border: 1px dashed var(--danger);
+    color: var(--danger);
+}
+
+/* Controls */
+.directional-controls {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.ctrl-btn {
+    padding: 15px;
+    background-color: #333;
+    color: white;
+    border: 1px solid #555;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background 0.2s;
+}
+
+.ctrl-btn:active, .ctrl-btn.active {
+    background-color: var(--primary);
+    border-color: var(--primary);
+}
+
+.ctrl-btn.stop {
+    background-color: #444;
+}
+.ctrl-btn.stop:active, .ctrl-btn.stop.active {
+    background-color: var(--danger);
+}
+
+.speed-control {
+    margin-bottom: 20px;
+}
+
+#speed-slider {
+    width: 100%;
+    margin-top: 10px;
+}
+
+.estop-btn {
+    width: 100%;
+    padding: 15px;
+    background-color: var(--danger);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 1.1rem;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 4px 0 #b71c1c;
+}
+
+.estop-btn:active {
+    transform: translateY(4px);
+    box-shadow: 0 0 0 #b71c1c;
+}
+
+/* Sensors & Motors */
+.sensor-grid, .motor-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+.sensor-group h4 {
+    color: #aaa;
+    margin-bottom: 5px;
+}
+
+.motor-item {
+    display: flex;
+    flex-direction: column;
+    background: #2a2a2a;
+    padding: 10px;
+    border-radius: 4px;
+    text-align: center;
+}
+
+.motor-name {
+    font-size: 0.8rem;
+    color: #aaa;
+}
+
+.motor-state {
+    font-weight: bold;
+    color: var(--primary);
+}
+
+/* LiDAR */
+.lidar-visual-bar {
+    width: 100%;
+    height: 20px;
+    background: #333;
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 10px 0;
+}
+
+.lidar-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--success);
+    transition: width 0.2s, background 0.2s;
+}
+
+.sensor-status {
+    font-size: 0.8rem;
+    color: #888;
+}
+
+@media (max-width: 768px) {
+    .camera-container {
+        grid-template-columns: 1fr;
+    }
+}
