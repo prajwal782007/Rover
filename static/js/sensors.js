@@ -5,7 +5,6 @@ class SensorManager {
         this.posY = document.getElementById('pos-y');
         this.posDisp = document.getElementById('pos-disp');
         this.heading = document.getElementById('heading-angle');
-        this.temp = document.getElementById('temp-val');
         
         // LiDAR
         this.lidarDist = document.getElementById('lidar-distance');
@@ -28,7 +27,6 @@ class SensorManager {
         if (telemetry.y !== undefined) this.posY.textContent = telemetry.y.toFixed(1);
         if (telemetry.disp !== undefined) this.posDisp.textContent = telemetry.disp.toFixed(1);
         if (telemetry.heading !== undefined) this.heading.textContent = telemetry.heading.toFixed(1);
-        if (telemetry.temp !== undefined) this.temp.textContent = telemetry.temp.toFixed(1);
 
         // LiDAR
         if (telemetry.lidar !== undefined) {
