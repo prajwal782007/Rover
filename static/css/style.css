@@ -62,7 +62,7 @@ h1 {
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 20px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
 }
 
 h2 {
@@ -93,8 +93,15 @@ h2 {
     background-color: #555;
 }
 
-.led.on { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
-.led.error { background-color: var(--danger); box-shadow: 0 0 8px var(--danger); }
+.led.on {
+    background-color: var(--success);
+    box-shadow: 0 0 8px var(--success);
+}
+
+.led.error {
+    background-color: var(--danger);
+    box-shadow: 0 0 8px var(--danger);
+}
 
 /* Cameras */
 .camera-panel {
@@ -150,7 +157,8 @@ h2 {
     transition: background 0.2s;
 }
 
-.ctrl-btn:active, .ctrl-btn.active {
+.ctrl-btn:active,
+.ctrl-btn.active {
     background-color: var(--primary);
     border-color: var(--primary);
 }
@@ -158,7 +166,9 @@ h2 {
 .ctrl-btn.stop {
     background-color: #444;
 }
-.ctrl-btn.stop:active, .ctrl-btn.stop.active {
+
+.ctrl-btn.stop:active,
+.ctrl-btn.stop.active {
     background-color: var(--danger);
 }
 
@@ -190,7 +200,8 @@ h2 {
 }
 
 /* Sensors & Motors */
-.sensor-grid, .motor-grid {
+.sensor-grid,
+.motor-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 15px;

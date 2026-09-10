@@ -6,7 +6,7 @@ class Config:
     PORT = int(os.environ.get('PORT', 5000))
 
     # ESP32 Configuration
-    ESP32_HOST = os.environ.get('ESP32_HOST', '192.168.133.219')
+    ESP32_HOST = os.environ.get('ESP32_HOST', '192.168.115.219')
     ESP32_PORT = int(os.environ.get('ESP32_PORT', 80))
     ESP32_URL = f"http://{ESP32_HOST}:{ESP32_PORT}"
 
