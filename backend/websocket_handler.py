@@ -46,3 +46,17 @@ def handle_motor_command(data):
     # Update local state
     if success or True: # update state regardless for UI feedback in demo
         rover_state.set_motor_state(command, speed)
+
+@socketio.on('set_mode')
+def handle_mode(data):
+    mode = data.get('mode', 'manual')
+    print(f"Setting mode: {mode}")
+    esp32_handler.send_mode(mode)
+    rover_state.set_mode(mode)
+
+@socketio.on('drive_distance')
+def handle_drive(data):
+    direction = data.get('direction', 'forward')
+    cm = data.get('cm', 50)
+    print(f"Drive {direction} for {cm}cm")
+    esp32_handler.send_distance_command(direction, cm)

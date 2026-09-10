@@ -1,7 +1,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Wire.h>
-#include <DHT.h>
 
 // =====================================================
 // WIFI
@@ -17,13 +16,6 @@ WebServer server(80);
 const int MPU_ADDR = 0x68;
 bool mpuConnected = false;
 float gyroZ_rad = 0;
-
-// =====================================================
-// DHT11 SENSOR (Temperature Only)
-// =====================================================
-#define DHTPIN 12
-#define DHTTYPE DHT11
-DHT dht(DHTPIN, DHTTYPE);
 
 // =====================================================
 // TF LiDAR (Serial2: RX=16, TX=17)
@@ -49,6 +41,12 @@ int lidarDistance = 0;
 
 int motorSpeed = 200;
 String currentMotionState = "STOPPED";
+String roverMode = "MANUAL"; // "MANUAL" or "AUTONOMOUS"
+
+// Target tracking for distance-based commands
+float targetDistanceCm = 0;
+float startDistanceCm = 0;
+bool executingDistanceCommand = false;
 
 // =====================================================
 // ODOMETRY & METRICS
@@ -64,15 +62,13 @@ long prevRightCount = 0;
 
 float posX = 0.0;
 float posY = 0.0;
-float headingTheta = 0.0; // Radians
+float headingTheta = 0.0;
 
 float totalDistanceCm = 0.0;
 float backwardDistanceCm = 0.0;
 float totalDisplacement = 0.0;
 
 unsigned long prevTime = 0;
-unsigned long lastDHTCheck = 0;
-float cachedTemp = 0.0;
 
 // Encoder Pins (Input Only)
 const int leftPhaseA = 34;
@@ -107,6 +103,7 @@ void stopMotors() {
   motorControl(FL_PWM, FL_IN1, FL_IN2, 0); motorControl(FR_PWM, FR_IN1, FR_IN2, 0);
   motorControl(BL_PWM, BL_IN1, BL_IN2, 0); motorControl(BR_PWM, BR_IN1, BR_IN2, 0);
   currentMotionState = "STOPPED";
+  executingDistanceCommand = false;
 }
 
 void moveForward() {
@@ -134,113 +131,135 @@ void turnRight() {
 }
 
 // =====================================================
-// HTML DASHBOARD (APOLLO MOON ROVER HUD)
+// HTML DASHBOARD (APOLLO-X COMMAND HUD)
 // =====================================================
 const char dashboard[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>APOLLO-X LUNAR ROVER HUD</title>
+<title>APOLLO-X LUNAR COMMAND HUD</title>
 <style>
-body { background: #030508; color: #00f3ff; font-family: 'Courier New', Courier, monospace; text-align: center; margin: 0; padding: 15px; }
-h1 { font-size: 24px; letter-spacing: 3px; color: #ff6600; margin-bottom: 5px; text-shadow: 0 0 10px rgba(255,102,0,0.5); }
-.hud-sub { font-size: 11px; color: #88aacc; margin-bottom: 20px; letter-spacing: 1px; }
-.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; max-width: 1100px; margin: auto; }
-.panel { background: rgba(10, 20, 35, 0.85); border: 1px solid #00f3ff44; border-radius: 8px; padding: 15px; box-shadow: inset 0 0 15px rgba(0,243,255,0.05); }
-.panel h2 { font-size: 14px; color: #ff6600; border-bottom: 1px dashed #00f3ff44; padding-bottom: 6px; margin-top: 0; letter-spacing: 2px; }
+body { background: #020408; color: #00f3ff; font-family: 'Courier New', monospace; text-align: center; margin: 0; padding: 20px; }
+h1 { font-size: 28px; letter-spacing: 4px; color: #ff6600; margin-bottom: 2px; text-shadow: 0 0 12px rgba(255,102,0,0.4); }
+.hud-sub { font-size: 12px; color: #7799bb; margin-bottom: 25px; letter-spacing: 2px; }
 
-/* Compass Attitude Indicator */
-.compass-box { position: relative; width: 140px; height: 140px; margin: 10px auto; border: 2px solid #00f3ff; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 15px rgba(0,243,255,0.2); }
-.compass-needle { width: 4px; height: 60px; background: #ff6600; position: absolute; top: 10px; transform-origin: bottom center; transition: transform 0.1s linear; box-shadow: 0 0 8px #ff6600; }
-.compass-center { width: 12px; height: 12px; background: #00f3ff; border-radius: 50%; z-index: 2; }
+.dashboard-container { max-width: 1300px; margin: auto; display: flex; flex-direction: column; gap: 20px; }
+.top-section { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+.panel { background: rgba(8, 16, 28, 0.9); border: 1px solid #00f3ff55; border-radius: 6px; padding: 20px; box-shadow: inset 0 0 20px rgba(0,243,255,0.03); text-align: left; }
+.panel h2 { font-size: 15px; color: #ff6600; border-bottom: 1px dashed #00f3ff44; padding-bottom: 8px; margin-top: 0; letter-spacing: 2px; text-align: center; }
 
-/* Canvas Path */
-canvas { background: #010306; border: 1px solid #00f3ff33; border-radius: 4px; }
+.moon-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle, #152238 0%, #050b14 80%); }
+.moon-graphic { width: 110px; height: 110px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ffffff 0%, #8899aa 50%, #223344 100%); box-shadow: 0 0 25px rgba(255,255,255,0.2); margin: 10px auto; position: relative; overflow: hidden; }
+.moon-graphic::after { content: ""; position: absolute; top: 15px; left: 45px; width: 20px; height: 15px; background: rgba(0,0,0,0.15); border-radius: 50%; box-shadow: 30px 20px 0 5px rgba(0,0,0,0.15), -15px 40px 0 2px rgba(0,0,0,0.12); }
 
-/* Metrics */
-.metric-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 13px; border-bottom: 1px solid #ffffff11; padding-bottom: 4px; }
+.compass-box { position: relative; width: 100px; height: 100px; margin: 10px auto; border: 2px solid #00f3ff; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.compass-needle { width: 3px; height: 40px; background: #ff6600; position: absolute; top: 10px; transform-origin: bottom center; transition: transform 0.1s linear; box-shadow: 0 0 6px #ff6600; }
+.compass-center { width: 10px; height: 10px; background: #00f3ff; border-radius: 50%; z-index: 2; }
+
+canvas { background: #010204; border: 1px solid #00f3ff33; border-radius: 4px; display: block; margin: 10px auto; }
+
+.metric-row { display: flex; justify-content: space-between; margin: 10px 0; font-size: 14px; border-bottom: 1px solid #ffffff11; padding-bottom: 5px; }
 .metric-val { color: #fff; font-weight: bold; text-shadow: 0 0 5px rgba(255,255,255,0.5); }
 
-/* Controls */
+.mode-selector { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+.mode-btn { background: #050b14; border: 1px solid #7799bb; color: #7799bb; padding: 10px; font-family: monospace; font-weight: bold; font-size: 12px; border-radius: 4px; cursor: pointer; letter-spacing: 1px; }
+.mode-btn.active { background: #ff6600; border-color: #ff6600; color: #fff; box-shadow: 0 0 10px rgba(255,102,0,0.5); }
+
+.input-group { margin: 12px 0; display: flex; flex-direction: column; gap: 5px; }
+.input-group label { font-size: 12px; color: #7799bb; }
+.input-row { display: flex; gap: 8px; }
+input[type=number] { width: 70%; background: #020408; border: 1px solid #00f3ff; color: #fff; padding: 8px; font-family: monospace; border-radius: 4px; }
+.cmd-btn { width: 30%; background: #00f3ff; border: none; color: #020408; font-weight: bold; border-radius: 4px; cursor: pointer; }
+
 .controls { display: grid; grid-template-columns: 80px 80px 80px; gap: 8px; justify-content: center; margin-top: 10px; }
-button { width: 80px; height: 50px; background: #0a1422; border: 1px solid #00f3ff; color: #00f3ff; font-family: monospace; font-weight: bold; border-radius: 4px; cursor: pointer; }
+button { width: 80px; height: 45px; background: #0a1422; border: 1px solid #00f3ff; color: #00f3ff; font-family: monospace; font-weight: bold; border-radius: 4px; cursor: pointer; }
 button:active { background: #00f3ff; color: #030508; }
 .stop-btn { background: #330505; border-color: #ff3333; color: #ff3333; }
-.stop-btn:active { background: #ff3333; color: #fff; }
 
-/* Camera Feeds */
-.cam-container { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-.cam-feed { background: #000; border: 1px solid #00f3ff33; height: 120px; display: flex; align-items: center; justify-content: center; color: #446688; font-size: 11px; border-radius: 4px; position: relative; overflow: hidden; }
-.cam-feed::before { content: "LIVE FEED"; position: absolute; top: 4px; left: 6px; font-size: 9px; color: #ff6600; letter-spacing: 1px; }
+.cam-container { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 10px; }
+.cam-feed { background: #000; border: 1px solid #00f3ff44; height: 130px; display: flex; align-items: center; justify-content: center; color: #446688; font-size: 12px; border-radius: 4px; position: relative; overflow: hidden; letter-spacing: 1px; }
+.cam-feed::before { content: "NODE ONLINE"; position: absolute; top: 6px; left: 8px; font-size: 10px; color: #ff6600; letter-spacing: 1px; }
 
-input[type=range] { width: 100%; accent-color: #ff6600; margin-top: 8px; }
+input[type=range] { width: 100%; accent-color: #ff6600; margin-top: 5px; }
 </style>
 </head>
 <body>
 
-<h1>🌙 APOLLO-X LUNAR ROVER</h1>
-<div class="hud-sub">TELEMETER & NAVIGATION SYSTEM // STATUS: <span id="status" style="color:#ff6600">STANDBY</span></div>
+<h1>APOLLO-X LUNAR COMMAND HUD</h1>
+<div class="hud-sub">KEYBOARD (WASD) & PRECISION ODOMETRY GUIDANCE</div>
 
-<div class="dashboard-grid">
+<div class="dashboard-container">
 
-    <!-- PANEL 1: ATTITUDE & HEADING -->
-    <div class="panel">
-        <h2>ATTITUDE INDICATOR</h2>
-        <div class="compass-box">
-            <div class="compass-needle" id="compassNeedle"></div>
-            <div class="compass-center"></div>
+    <!-- TOP SECTION -->
+    <div class="top-section">
+
+        <!-- PANEL 1 -->
+        <div class="panel moon-panel">
+            <h2>LUNAR ENVIRONMENT</h2>
+            <div class="moon-graphic"></div>
+            <div style="width: 100%; margin-top: 5px;">
+                <div class="metric-row"><span>SURFACE TEMP:</span><span class="metric-val">-20.0 °C</span></div>
+                <div class="metric-row"><span>HEADING:</span><span class="metric-val" id="heading">0.0°</span></div>
+                <div class="compass-box">
+                    <div class="compass-needle" id="compassNeedle"></div>
+                    <div class="compass-center"></div>
+                </div>
+            </div>
         </div>
-        <div class="metric-row"><span>HEADING ANGLE:</span><span class="metric-val" id="heading">0.0°</span></div>
-        <div class="metric-row"><span>LUNAR TEMP:</span><span class="metric-val" id="temp">0.0 °C</span></div>
-    </div>
 
-    <!-- PANEL 2: PATH TRACER -->
-    <div class="panel">
-        <h2>ROVER TRAJECTORY MAPPING</h2>
-        <canvas id="pathCanvas" width="240" height="150"></canvas>
-        <div class="metric-row"><span>GRID POS (X, Y):</span><span class="metric-val" id="xyPos">0, 0 cm</span></div>
-    </div>
-
-    <!-- PANEL 3: TELEMETRY & METRICS -->
-    <div class="panel">
-        <h2>CORE TELEMETRY</h2>
-        <div class="metric-row"><span>TOTAL DISTANCE:</span><span class="metric-val" id="totDist">0.0 cm</span></div>
-        <div class="metric-row"><span>DISPLACEMENT:</span><span class="metric-val" id="disp">0.0 cm</span></div>
-        <div class="metric-row"><span>BACKWARD TRAVEL:</span><span class="metric-val" id="bwdDist">0.0 cm</span></div>
-        <div class="metric-row"><span>OBSTACLE STATUS:</span><span class="metric-val" id="obsStatus" style="color:#00ffcc">CLEAR</span></div>
-        <div class="metric-row"><span>LiDAR DISTANCE:</span><span class="metric-val" id="lidarDist">--- cm</span></div>
-    </div>
-
-    <!-- PANEL 4: DRIVE CONTROLS -->
-    <div class="panel">
-        <h2>MANUAL GUIDANCE</h2>
-        <div class="controls">
-            <div></div>
-            <button onmousedown="move('forward')" onmouseup="stop()" ontouchstart="move('forward')" ontouchend="stop()">FWD</button>
-            <div></div>
-            <button onmousedown="move('left')" onmouseup="stop()" ontouchstart="move('left')" ontouchend="stop()">LFT</button>
-            <button class="stop-btn" onclick="stop()">STP</button>
-            <button onmousedown="move('right')" onmouseup="stop()" ontouchstart="move('right')" ontouchend="stop()">RGT</button>
-            <div></div>
-            <button onmousedown="move('backward')" onmouseup="stop()" ontouchstart="move('backward')" ontouchend="stop()">BCK</button>
-            <div></div>
+        <!-- PANEL 2 -->
+        <div class="panel">
+            <h2>TRAJECTORY MAPPING</h2>
+            <canvas id="pathCanvas" width="260" height="140"></canvas>
+            <div class="metric-row"><span>GRID (X, Y):</span><span class="metric-val" id="xyPos">0, 0 cm</span></div>
+            <div class="metric-row"><span>TOTAL DIST:</span><span class="metric-val" id="totDist">0.0 cm</span></div>
+            <div class="metric-row"><span>DISPLACEMENT:</span><span class="metric-val" id="disp">0.0 cm</span></div>
         </div>
-        <div style="margin-top:12px; text-align:left; font-size:11px;">
-            DRIVE POWER: <span id="speedValue">200</span>
-            <input type="range" min="0" max="255" value="200" id="speed" oninput="changeSpeed(this.value)">
+
+        <!-- PANEL 3 -->
+        <div class="panel">
+            <h2>GUIDANCE & COMMANDS</h2>
+            <div class="mode-selector">
+                <button class="mode-btn active" id="btnManual" onclick="setMode('manual')">MANUAL (WASD)</button>
+                <button class="mode-btn" id="btnAuto" onclick="setMode('auto')">AUTONOMOUS</button>
+            </div>
+
+            <div class="metric-row"><span>OBSTACLE STATUS:</span><span class="metric-val" id="obsStatus" style="color:#00ffcc">CLEAR</span></div>
+            <div class="metric-row"><span>LiDAR RANGE:</span><span class="metric-val" id="lidarDist">--- cm</span></div>
+
+            <div class="input-group">
+                <label>MOVE DISTANCE (CM):</label>
+                <div class="input-row">
+                    <input type="number" id="cmInput" value="50">
+                    <button class="cmd-btn" onclick="sendDistance('forward')">GO</button>
+                </div>
+            </div>
+
+            <div class="controls">
+                <div></div>
+                <button onclick="move('forward')">W</button>
+                <div></div>
+                <button onclick="move('left')">A</button>
+                <button class="stop-btn" onclick="stop()">STP</button>
+                <button onclick="move('right')">D</button>
+                <div></div>
+                <button onclick="move('backward')">S</button>
+                <div></div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- BOTTOM SECTION: STEREO HAZ-CAM VISION -->
+    <div class="panel">
+        <h2>STEREOSCOPIC HAZ-CAM VISION NODES</h2>
+        <div class="cam-container">
+            <div class="cam-feed">NAV-CAM NODE 1 [ACTIVE]</div>
+            <div class="cam-feed">HAZ-CAM NODE 2 [ACTIVE]</div>
         </div>
     </div>
 
-</div>
-
-<!-- PANEL 5: DUAL ESP32-CAM VISION -->
-<div class="panel" style="max-width:1100px; margin: 15px auto;">
-    <h2>STEREOSCOPIC HAZ-CAM VISION (ESP32-CAM NODES)</h2>
-    <div class="cam-container">
-        <div class="cam-feed">CAM 1: NAV-CAM [STANDBY]</div>
-        <div class="cam-feed">CAM 2: HAZ-CAM [STANDBY]</div>
-    </div>
 </div>
 
 <script>
@@ -248,14 +267,44 @@ const canvas = document.getElementById("pathCanvas");
 const ctx = canvas.getContext("2d");
 let pathPoints = [];
 
-function move(direction) { fetch("/move?direction=" + direction); document.getElementById("status").innerText = direction.toUpperCase(); }
-function stop() { fetch("/stop"); document.getElementById("status").innerText = "STANDBY"; }
-function changeSpeed(value) { document.getElementById("speedValue").innerText = value; fetch("/speed?value=" + value); }
+function setMode(mode) {
+    fetch("/mode?state=" + mode).then(() => {
+        if(mode === 'auto') {
+            document.getElementById("btnAuto").classList.add("active");
+            document.getElementById("btnManual").classList.remove("active");
+        } else {
+            document.getElementById("btnManual").classList.add("active");
+            document.getElementById("btnAuto").classList.remove("active");
+        }
+    });
+}
+
+function move(dir) { fetch("/move?direction=" + dir); }
+function stop() { fetch("/stop"); }
+
+function sendDistance(dir) {
+    let cm = document.getElementById("cmInput").value;
+    fetch(`/command?dir=${dir}&cm=${cm}`);
+}
+
+// WASD Keyboard Listener
+document.addEventListener("keydown", function(e) {
+    if(e.repeat) return;
+    let key = e.key.toLowerCase();
+    if(key === 'w') move('forward');
+    if(key === 's') move('backward');
+    if(key === 'a') move('left');
+    if(key === 'd') move('right');
+    if(key === ' ') stop();
+});
+
+document.addEventListener("keyup", function(e) {
+    let key = e.key.toLowerCase();
+    if(['w','s','a','d'].includes(key)) stop();
+});
 
 function drawPath(x, y) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw grid background lines
     ctx.strokeStyle = "#00f3ff11";
     ctx.lineWidth = 1;
     for(let i=0; i<canvas.width; i+=30) {
@@ -263,7 +312,6 @@ function drawPath(x, y) {
         ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
     }
 
-    // Map rover coordinates to canvas center
     let cx = canvas.width / 2 + (x * 0.8);
     let cy = canvas.height / 2 - (y * 0.8);
     pathPoints.push({x: cx, y: cy});
@@ -278,7 +326,6 @@ function drawPath(x, y) {
         ctx.stroke();
     }
 
-    // Draw rover center blip
     ctx.fillStyle = "#00f3ff";
     ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI*2); ctx.fill();
 }
@@ -287,19 +334,15 @@ function updateTelemetry() {
     fetch("/sensor").then(res => res.json()).then(data => {
         document.getElementById("totDist").innerText = data.tot.toFixed(1) + " cm";
         document.getElementById("disp").innerText = data.disp.toFixed(1) + " cm";
-        document.getElementById("bwdDist").innerText = data.bwd.toFixed(1) + " cm";
         document.getElementById("heading").innerText = data.heading.toFixed(1) + "°";
         document.getElementById("xyPos").innerText = data.x.toFixed(0) + ", " + data.y.toFixed(0) + " cm";
-        document.getElementById("temp").innerText = data.temp.toFixed(1) + " °C";
         document.getElementById("lidarDist").innerText = data.lidar + " cm";
 
-        // Compass Rotation
         document.getElementById("compassNeedle").style.transform = `rotate(${data.heading}deg)`;
 
-        // Obstacle warning check
         let obsElem = document.getElementById("obsStatus");
-        if(data.lidar > 0 && data.lidar < 20) {
-            obsElem.innerText = "WARNING: PROXIMITY";
+        if(data.lidar > 0 && data.lidar < 25) {
+            obsElem.innerText = "OBSTACLE DETECTED";
             obsElem.style.color = "#ff3333";
         } else {
             obsElem.innerText = "CLEAR";
@@ -310,18 +353,6 @@ function updateTelemetry() {
     });
 }
 setInterval(updateTelemetry, 300);
-
-document.addEventListener("keydown", function(event) {
-    if(event.repeat) return;
-    if(event.key === "ArrowUp") move("forward");
-    else if(event.key === "ArrowDown") move("backward");
-    else if(event.key === "ArrowLeft") move("left");
-    else if(event.key === "ArrowRight") move("right");
-    else if(event.key === " ") stop();
-});
-document.addEventListener("keyup", function(event) {
-    if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(event.key)) stop();
-});
 </script>
 </body>
 </html>
@@ -329,25 +360,44 @@ document.addEventListener("keyup", function(event) {
 
 void handleRoot() { server.send(200, "text/html", dashboard); }
 
+void handleMode() {
+  if (server.hasArg("state")) {
+    roverMode = server.arg("state");
+    roverMode.toUpperCase();
+  }
+  server.send(200, "text/plain", "OK");
+}
+
 void handleMove() {
-  if (!server.hasArg("direction")) { server.send(400, "text/plain", "Missing direction"); return; }
+  if (roverMode == "AUTONOMOUS") return;
+  if (!server.hasArg("direction")) return;
   String dir = server.arg("direction");
   if (dir == "forward") moveForward();
   else if (dir == "backward") moveBackward();
   else if (dir == "left") turnLeft();
   else if (dir == "right") turnRight();
-  else stopMotors();
   server.send(200, "text/plain", "OK");
 }
 
-void handleStop() { stopMotors(); server.send(200, "text/plain", "STOPPED"); }
-void handleSpeed() {
-  if (server.hasArg("value")) { motorSpeed = constrain(server.arg("value").toInt(), 0, 255); }
+void handleCommand() {
+  if (server.hasArg("dir") && server.hasArg("cm")) {
+    String dir = server.arg("dir");
+    targetDistanceCm = server.arg("cm").toFloat();
+    startDistanceCm = totalDistanceCm;
+    executingDistanceCommand = true;
+
+    if (dir == "forward") moveForward();
+    else if (dir == "backward") moveBackward();
+  }
   server.send(200, "text/plain", "OK");
+}
+
+void handleStop() { 
+  stopMotors(); 
+  server.send(200, "text/plain", "STOPPED"); 
 }
 
 void handleSensor() {
-  // Read TF LiDAR from Serial2 if available
   while (Serial2.available() >= 9) {
     if (Serial2.read() == 0x59) {
       if (Serial2.read() == 0x59) {
@@ -359,11 +409,25 @@ void handleSensor() {
     }
   }
 
-  // Safely poll DHT11 temperature every 2 seconds
-  if (millis() - lastDHTCheck > 2000) {
-    lastDHTCheck = millis();
-    float t = dht.readTemperature();
-    if (!isnan(t)) cachedTemp = t;
+  // Autonomous Behavior Loop: Safety + Path Finding
+  if (roverMode == "AUTONOMOUS") {
+    if (lidarDistance > 0 && lidarDistance < 25) {
+      stopMotors();
+      moveBackward();
+      delay(400);
+      turnRight();
+      delay(400);
+    } else {
+      moveForward();
+    }
+  }
+
+  // Precision Distance Command Check (e.g. move exactly 50cm)
+  if (executingDistanceCommand) {
+    float movedCm = totalDistanceCm - startDistanceCm;
+    if (movedCm >= targetDistanceCm || (lidarDistance > 0 && lidarDistance < 20)) {
+      stopMotors();
+    }
   }
 
   float headingDeg = headingTheta * (180.0 / 3.14159);
@@ -372,28 +436,22 @@ void handleSensor() {
 
   String json = "{";
   json += "\"tot\":" + String(totalDistanceCm, 1) + ",";
-  json += "\"bwd\":" + String(backwardDistanceCm, 1) + ",";
   json += "\"disp\":" + String(totalDisplacement, 1) + ",";
   json += "\"heading\":" + String(headingDeg, 1) + ",";
   json += "\"x\":" + String(posX, 1) + ",";
   json += "\"y\":" + String(posY, 1) + ",";
-  json += "\"lidar\":" + String(lidarDistance) + ",";
-  json += "\"temp\":" + String(cachedTemp, 1);
+  json += "\"lidar\":" + String(lidarDistance);
   json += "}";
 
   server.send(200, "application/json", json);
 }
 
-// =====================================================
-// UPDATE ODOMETRY MATH
-// =====================================================
 void updateOdometry() {
   unsigned long currentTime = millis();
   float dt = (currentTime - prevTime) / 1000.0;
   if (dt <= 0) return;
   prevTime = currentTime;
 
-  // Read Gyro Z from MPU6050
   Wire.beginTransmission(MPU_ADDR); Wire.write(0x47); Wire.endTransmission(false);
   Wire.requestFrom(MPU_ADDR, 2, true);
   int16_t rawGz = Wire.read()<<8 | Wire.read();
@@ -416,10 +474,7 @@ void updateOdometry() {
   float distRight = deltaRight * CM_PER_PULSE;
   float deltaDistance = (distLeft + distRight) / 2.0;
 
-  if (currentMotionState == "FORWARD") {
-    totalDistanceCm += abs(deltaDistance);
-  } else if (currentMotionState == "BACKWARD") {
-    backwardDistanceCm += abs(deltaDistance);
+  if (currentMotionState == "FORWARD" || currentMotionState == "BACKWARD") {
     totalDistanceCm += abs(deltaDistance);
   }
 
@@ -428,13 +483,9 @@ void updateOdometry() {
   totalDisplacement = sqrt((posX * posX) + (posY * posY));
 }
 
-// =====================================================
-// SETUP
-// =====================================================
 void setup() {
   Serial.begin(115200); 
-  Serial2.begin(115200, SERIAL_8N1, 16, 17); // LiDAR on RX2=16, TX2=17
-  dht.begin(); // Start DHT11 on GPIO 15
+  Serial2.begin(115200, SERIAL_8N1, 16, 17);
   delay(1000);
 
   pinMode(FL_PWM, OUTPUT); pinMode(FL_IN1, OUTPUT); pinMode(FL_IN2, OUTPUT);
@@ -456,9 +507,10 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) delay(500);
 
   server.on("/", handleRoot);
+  server.on("/mode", handleMode);
   server.on("/move", handleMove);
+  server.on("/command", handleCommand);
   server.on("/stop", handleStop);
-  server.on("/speed", handleSpeed);
   server.on("/sensor", handleSensor);
   server.begin();
   

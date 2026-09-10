@@ -54,26 +54,45 @@
         </section>
 
         <!-- ROVER CONTROL -->
-        <section class="panel control-panel">
+        <section class="panel">
             <h2>Rover Control</h2>
-            <div class="directional-controls">
-                <div class="empty"></div>
-                <button id="btn-forward" class="ctrl-btn">FORWARD</button>
-                <div class="empty"></div>
-                
-                <button id="btn-left" class="ctrl-btn">LEFT</button>
-                <button id="btn-stop" class="ctrl-btn stop">STOP</button>
-                <button id="btn-right" class="ctrl-btn">RIGHT</button>
-                
-                <div class="empty"></div>
-                <button id="btn-backward" class="ctrl-btn">BACKWARD</button>
-                <div class="empty"></div>
+            
+            <div style="margin-bottom: 20px; text-align: center;">
+                <h4>Navigation Mode</h4>
+                <div style="display: flex; gap: 10px; justify-content: center; margin-top: 10px;">
+                    <button id="btn-manual" class="active-mode" onclick="setMode('manual')" style="background: var(--primary); color: #fff;">MANUAL</button>
+                    <button id="btn-auto" onclick="setMode('auto')">AUTONOMOUS</button>
+                </div>
             </div>
+
+            <div class="d-pad">
+                <div></div>
+                <button class="control-btn" id="btn-forward" onclick="sendCommand('forward')">FORWARD</button>
+                <div></div>
+                
+                <button class="control-btn" id="btn-left" onclick="sendCommand('left')">LEFT</button>
+                <button class="control-btn stop" id="btn-stop" onclick="sendCommand('stop')">STOP</button>
+                <button class="control-btn" id="btn-right" onclick="sendCommand('right')">RIGHT</button>
+                
+                <div></div>
+                <button class="control-btn" id="btn-backward" onclick="sendCommand('backward')">BACKWARD</button>
+                <div></div>
+            </div>
+
             <div class="speed-control">
-                <label for="speed-slider">Speed: <span id="speed-display">200</span></label>
-                <input type="range" id="speed-slider" min="0" max="255" value="200">
+                <label for="speed-slider">Speed: <span id="speed-val">200</span></label>
+                <input type="range" id="speed-slider" min="0" max="255" value="200" oninput="changeSpeed(this.value)">
             </div>
-            <button id="btn-estop" class="estop-btn">EMERGENCY STOP</button>
+
+            <div style="margin-top: 20px; padding-top: 15px; border-top: 1px dashed var(--primary);">
+                <h4>Auto Drive Distance (cm)</h4>
+                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                    <input type="number" id="distance-input" value="50" style="width: 100px; padding: 5px; background: #000; color: #fff; border: 1px solid var(--primary); border-radius: 4px;">
+                    <button onclick="driveDistance('forward')" style="background: var(--primary); color: #000; border: none; font-weight: bold; padding: 5px 15px; border-radius: 4px; cursor: pointer;">GO</button>
+                </div>
+            </div>
+
+            <button class="emergency-stop" onclick="sendCommand('emergency_stop')">EMERGENCY STOP</button>
         </section>
 
         <!-- MPU6050 -->
@@ -89,7 +108,6 @@
                 <div class="sensor-group">
                     <h4>Heading</h4>
                     <p>Angle: <span id="heading-angle">0.0</span>°</p>
-                    <p>Temp: <span id="temp-val">0.0</span>°C</p>
                 </div>
             </div>
             <div class="trajectory-container">

@@ -43,6 +43,24 @@ class ESP32Handler:
             rover_state.esp32_connected = False
             return False
 
+    def send_mode(self, mode):
+        if Config.DEMO_MODE:
+            return True
+        try:
+            res = requests.get(f"{Config.ESP32_URL}/mode?state={mode}", timeout=self.timeout)
+            return res.status_code == 200
+        except requests.exceptions.RequestException:
+            return False
+
+    def send_distance_command(self, direction, cm):
+        if Config.DEMO_MODE:
+            return True
+        try:
+            res = requests.get(f"{Config.ESP32_URL}/command?dir={direction}&cm={cm}", timeout=self.timeout)
+            return res.status_code == 200
+        except requests.exceptions.RequestException:
+            return False
+
     def _poll_loop(self):
         """Poll telemetry data from the ESP32 (or simulate it in DEMO mode)"""
         while self.running:

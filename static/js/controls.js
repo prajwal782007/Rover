@@ -93,3 +93,34 @@ class ControlManager {
 }
 
 const controls = new ControlManager();
+
+// Global wrappers for HTML onclick handlers
+window.setMode = function(mode) {
+    if (ws.socket) ws.socket.emit('set_mode', { mode: mode });
+    if (mode === 'auto') {
+        document.getElementById('btn-auto').style.background = 'var(--primary)';
+        document.getElementById('btn-auto').style.color = '#fff';
+        document.getElementById('btn-manual').style.background = '#0d1117';
+        document.getElementById('btn-manual').style.color = 'var(--primary)';
+    } else {
+        document.getElementById('btn-manual').style.background = 'var(--primary)';
+        document.getElementById('btn-manual').style.color = '#fff';
+        document.getElementById('btn-auto').style.background = '#0d1117';
+        document.getElementById('btn-auto').style.color = 'var(--primary)';
+    }
+};
+
+window.sendCommand = function(cmd) {
+    ws.sendCommand(cmd, controls.currentSpeed);
+};
+
+window.changeSpeed = function(val) {
+    controls.currentSpeed = parseInt(val);
+    document.getElementById('speed-val').textContent = val;
+    if (ws.socket) ws.socket.emit('set_speed', { speed: controls.currentSpeed });
+};
+
+window.driveDistance = function(dir) {
+    let cm = document.getElementById('distance-input').value;
+    if (ws.socket) ws.socket.emit('drive_distance', { direction: dir, cm: parseFloat(cm) });
+};
