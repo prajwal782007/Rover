@@ -415,8 +415,14 @@ void handleSensor() {
       stopMotors();
       moveBackward();
       delay(400);
-      turnRight();
-      delay(400);
+      
+      // Randomly choose Left or Right
+      if (random(0, 2) == 0) {
+        turnLeft();
+      } else {
+        turnRight();
+      }
+      delay(500);
     } else {
       moveForward();
     }
@@ -425,8 +431,15 @@ void handleSensor() {
   // Precision Distance Command Check (e.g. move exactly 50cm)
   if (executingDistanceCommand) {
     float movedCm = totalDistanceCm - startDistanceCm;
-    if (movedCm >= targetDistanceCm || (lidarDistance > 0 && lidarDistance < 20)) {
+    if (movedCm >= targetDistanceCm) {
       stopMotors();
+      executingDistanceCommand = false;
+    } else if (lidarDistance > 0 && lidarDistance < 20) {
+      stopMotors();
+      moveBackward();
+      delay(400);
+      if (random(0, 2) == 0) turnLeft(); else turnRight();
+      delay(500);
     }
   }
 
