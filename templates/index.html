@@ -118,11 +118,14 @@
 
         <!-- LiDAR -->
         <section class="panel">
-            <h2>LiDAR</h2>
+            <h2>LiDAR & Obstacle Detection</h2>
             <div class="lidar-display">
                 <p>Distance: <span id="lidar-distance">0</span> cm</p>
                 <div class="lidar-visual-bar">
                     <div id="lidar-fill" class="lidar-fill"></div>
+                </div>
+                <div style="margin-top: 15px; text-align: center; font-size: 1.2em; font-weight: bold; border-top: 1px dashed var(--primary); padding-top: 10px;">
+                    OBSTACLE STATUS: <span id="obs-status" style="color: var(--success);">CLEAR</span>
                 </div>
                 <p class="sensor-status" id="lidar-sensor-status">DISCONNECTED</p>
             </div>

@@ -10,6 +10,7 @@ class SensorManager {
         this.lidarDist = document.getElementById('lidar-distance');
         this.lidarFill = document.getElementById('lidar-fill');
         this.lidarStatus = document.getElementById('lidar-sensor-status');
+        this.obsStatus = document.getElementById('obs-status');
 
         // Trajectory Canvas
         this.canvas = document.getElementById('trajectory-canvas');
@@ -30,28 +31,33 @@ class SensorManager {
 
         // LiDAR
         if (telemetry.lidar !== undefined) {
-            const dist = telemetry.lidar;
-            this.lidarDist.textContent = dist;
+            this.lidarDist.textContent = telemetry.lidar;
             
-            if (dist > 0) {
+            if (telemetry.lidar > 0) {
                 this.lidarStatus.textContent = 'CONNECTED';
                 this.lidarStatus.style.color = 'var(--success)';
                 
-                // Visual bar (assuming max 200cm for visual scale)
-                let pct = Math.min((dist / 200) * 100, 100);
-                this.lidarFill.style.width = pct + '%';
+                // Update fill bar
+                const maxDist = 400; // 4 meters max typical
+                const pct = Math.min((telemetry.lidar / maxDist) * 100, 100);
+                this.lidarFill.style.width = `${pct}%`;
                 
-                if (dist < 20) {
-                    this.lidarFill.style.background = 'var(--danger)';
-                } else if (dist < 50) {
-                    this.lidarFill.style.background = '#ff9800';
+                // Obstacle Status matching ESP32 (< 25 cm)
+                if (telemetry.lidar < 25) {
+                    this.obsStatus.textContent = "OBSTACLE DETECTED";
+                    this.obsStatus.style.color = "var(--danger)";
+                    this.lidarFill.style.backgroundColor = 'var(--danger)';
                 } else {
-                    this.lidarFill.style.background = 'var(--success)';
+                    this.obsStatus.textContent = "CLEAR";
+                    this.obsStatus.style.color = "var(--success)";
+                    this.lidarFill.style.backgroundColor = 'var(--primary)';
                 }
             } else {
                 this.lidarStatus.textContent = 'NO DATA / OFFLINE';
                 this.lidarStatus.style.color = 'var(--danger)';
                 this.lidarFill.style.width = '0%';
+                this.obsStatus.textContent = "UNKNOWN";
+                this.obsStatus.style.color = "#888";
             }
         }
 
